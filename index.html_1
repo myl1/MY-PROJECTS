@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>无人机多区域联合指挥系统</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+    
+    <style>
+        :root {
+            --bg-base: #121212;
+            --bg-panel: #1e1e2f;
+            --bg-card: #27293d;
+            --text-main: #ffffff;
+            --text-sub: #9a9a9a;
+            --theme-blue: #3388ff;
+            --status-ok: #00f2c3;
+            --status-warn: #ff8d72;
+            --status-err: #fd5d93;
+            --border-color: #2b2b40;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', sans-serif; background-color: var(--bg-base); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; }
+
+        .login-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(18, 18, 18, 0.98); z-index: 9999; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(8px); transition: opacity 0.5s; }
+        .login-box { background: var(--bg-panel); padding: 40px; border-radius: 8px; border: 1px solid var(--border-color); width: 380px; box-shadow: 0 10px 50px rgba(0,0,0,0.9); }
+        .login-title { margin-bottom: 30px; color: var(--text-main); text-align: center; font-size: 1.6rem; letter-spacing: 2px; font-weight: 300; }
+        .login-title strong { color: var(--theme-blue); font-weight: 700; }
+        .input-group { margin-bottom: 22px; display: flex; flex-direction: column; }
+        .input-group label { font-size: 0.85rem; color: var(--text-sub); margin-bottom: 9px; }
+        .input-group input { padding: 14px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-base); color: var(--text-main); outline: none; transition: border 0.3s; font-size: 1.1rem; font-family: monospace; }
+        .input-group input:focus { border-color: var(--theme-blue); box-shadow: 0 0 8px rgba(51, 136, 255, 0.6); }
+
+        .sidebar { width: 240px; background-color: var(--bg-panel); border-right: 1px solid var(--border-color); display: flex; flex-direction: column; padding: 20px 0; }
+        .logo { font-size: 1.2rem; font-weight: bold; text-align: center; margin-bottom: 30px; color: var(--status-ok); letter-spacing: 1px; }
+        .nav-menu { list-style: none; }
+        .nav-item { padding: 15px 25px; cursor: pointer; color: var(--text-sub); transition: all 0.3s; border-left: 3px solid transparent; }
+        .nav-item:hover, .nav-item.active { background-color: rgba(51, 136, 255, 0.1); color: var(--text-main); border-left-color: var(--theme-blue); }
+
+        .main-container { flex: 1; display: flex; flex-direction: column; }
+        .header { height: 60px; background-color: var(--bg-panel); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; padding: 0 20px; }
+        .sys-info { display: flex; gap: 20px; color: var(--text-sub); font-size: 0.9rem; }
+        .sys-info span strong { color: var(--text-main); margin-left: 5px; }
+        .user-profile { width: 35px; height: 35px; background-color: var(--status-ok); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; text-transform: uppercase; color: var(--bg-base); }
+
+        .panel-title { padding: 15px; font-weight: 600; border-bottom: 1px solid var(--border-color); background-color: var(--bg-card); z-index: 10; display: flex; justify-content: space-between; align-items: center; }
+        
+        /* 视图 1：大屏监控 */
+        #view-dashboard { flex: 1; padding: 20px; display: flex; gap: 20px; }
+        .map-section { flex: 6; background-color: var(--bg-card); border-radius: 8px; border: 1px solid var(--border-color); overflow: hidden; display: flex; flex-direction: column; }
+        .patrol-legend { display: flex; gap: 15px; font-size: 0.8rem; font-weight: normal; color: var(--text-sub); }
+        .legend-item { display: flex; align-items: center; gap: 5px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; }
+        
+        /* === 修复了这里：把 #planning-map 也加上了铺满容器的属性 === */
+        #map, #planning-map { flex: 1; width: 100%; height: 100%; min-height: 200px; }
+
+        .telemetry-section { flex: 4; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; padding-right: 5px; }
+        .drone-card { background-color: var(--bg-panel); border-radius: 8px; border: 1px solid var(--border-color); padding: 18px; border-left: 4px solid var(--status-ok); position: relative; }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px dashed var(--border-color); }
+        .drone-id { font-weight: bold; font-size: 1.15rem; color: var(--text-main); }
+        .status-badge { font-size: 0.8rem; padding: 4px 10px; border-radius: 4px; background-color: rgba(0, 242, 195, 0.15); color: var(--status-ok); font-weight: 600; }
+        .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .data-item { display: flex; flex-direction: column; }
+        .data-label { font-size: 0.75rem; color: var(--text-sub); margin-bottom: 4px; }
+        .data-value { font-family: monospace; font-size: 1.1rem; color: var(--text-main); }
+        .area-tag { position: absolute; top: 18px; right: 18px; font-size: 2rem; font-weight: bold; color: rgba(255, 255, 255, 0.03); font-style: italic; }
+
+        /* 视图 2：设备台账 */
+        #view-fleet { display: none; padding: 20px; flex: 1; overflow-y: auto; }
+        .data-table { width: 100%; border-collapse: collapse; background-color: var(--bg-card); border-radius: 8px; overflow: hidden; }
+        .data-table th, .data-table td { padding: 15px; text-align: left; border-bottom: 1px solid var(--border-color); }
+        .data-table th { background-color: rgba(51, 136, 255, 0.1); color: var(--theme-blue); }
+
+        /* 视图 3：航线规划 */
+        #view-planning { display: none; padding: 20px; flex: 1; gap: 20px; }
+        .planning-panel { flex: 3; background-color: var(--bg-card); border-radius: 8px; border: 1px solid var(--border-color); padding: 20px; display: flex; flex-direction: column; }
+        .waypoint-list { list-style: none; flex: 1; overflow-y: auto; margin-bottom: 20px; }
+        .waypoint-item { background: var(--bg-panel); padding: 12px; margin-bottom: 10px; border-radius: 6px; border-left: 3px solid var(--theme-blue); display: flex; justify-content: space-between; align-items: center;}
+        .wp-info { display: flex; flex-direction: column; gap: 4px; }
+        .wp-index { font-weight: bold; color: var(--theme-blue); font-size: 0.9rem; }
+        .wp-coords { font-family: monospace; font-size: 0.8rem; color: var(--text-sub); }
+        
+        .btn { padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; transition: opacity 0.2s; font-size: 1rem; }
+        .btn:hover { opacity: 0.8; }
+        .btn-primary { background-color: var(--theme-blue); color: white; }
+        .btn-danger { background-color: rgba(253, 93, 147, 0.2); color: var(--status-err); border: 1px solid var(--status-err); }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-base); }
+        ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+    </style>
+</head>
+<body>
+
+    <div id="login-overlay" class="login-overlay">
+        <div class="login-box">
+            <h2 class="login-title">指挥中心 <strong>授权登录</strong></h2>
+            <div class="input-group">
+                <label>操作员代号 (Username)</label>
+                <input type="text" id="username" placeholder="请输入: 222333">
+            </div>
+            <div class="input-group">
+                <label>安全密匙 (Password)</label>
+                <input type="password" id="password" placeholder="请输入: 888888">
+            </div>
+            <button class="btn btn-primary" style="width: 100%; margin-top: 15px;" id="btn-login">验 证 授 权</button>
+        </div>
+    </div>
+
+    <aside class="sidebar">
+        <div class="logo">UAV COMMAND</div>
+        <ul class="nav-menu">
+            <li class="nav-item active">全局联合监控</li>
+            <li class="nav-item">设备资产台账</li>
+            <li class="nav-item">巡查路线规划</li>
+        </ul>
+    </aside>
+
+    <main class="main-container">
+        <header class="header">
+            <div class="sys-info">
+                <span>系统授权: <strong id="current-op-name" style="color:var(--status-ok)">待登录</strong></span>
+                <span>巡查区域: <strong>A / B / C 区</strong></span>
+            </div>
+            <div class="user-profile" id="user-avatar">??</div>
+        </header>
+
+        <section id="view-dashboard">
+            <div class="map-section">
+                <div class="panel-title">
+                    <span>联合监控实时态势图</span>
+                    <div class="patrol-legend">
+                        <div class="legend-item"><div class="dot" style="background:#00f2c3"></div>A区 港口</div>
+                        <div class="legend-item"><div class="dot" style="background:#ff8d72"></div>B区 工业园</div>
+                        <div class="legend-item"><div class="dot" style="background:#3388ff"></div>C区 市区</div>
+                    </div>
+                </div>
+                <div id="map"></div>
+            </div>
+            <div class="telemetry-section">
+                <div class="drone-card">
+                    <span class="area-tag">AREA A</span>
+                    <div class="card-header"><span class="drone-id">Patrol-A-01</span><span class="status-badge">港口区巡查中</span></div>
+                    <div class="data-grid">
+                        <div class="data-item"><span class="data-label">相对高度</span><span class="data-value">110.2 m</span></div>
+                        <div class="data-item"><span class="data-label">飞行速度</span><span class="data-value">15.5 m/s</span></div>
+                        <div class="data-item"><span class="data-label">电池余量</span><span class="data-value" style="color: var(--status-ok);">82%</span></div>
+                        <div class="data-item"><span class="data-label">任务目标</span><span class="data-value">海防港1号锚地</span></div>
+                    </div>
+                </div>
+                <div class="drone-card" style="border-left-color: var(--status-warn);">
+                    <span class="area-tag">AREA B</span>
+                    <div class="card-header"><span class="drone-id">Patrol-B-02</span><span class="status-badge" style="background-color:rgba(255,141,114,0.15); color:var(--status-warn)">工业园巡查中</span></div>
+                    <div class="data-grid">
+                        <div class="data-item"><span class="data-label">相对高度</span><span class="data-value">95.8 m</span></div>
+                        <div class="data-item"><span class="data-label">飞行速度</span><span class="data-value">10.1 m/s</span></div>
+                        <div class="data-item"><span class="data-label">电池余量</span><span class="data-value" style="color: var(--status-ok);">75%</span></div>
+                        <div class="data-item"><span class="data-label">任务目标</span><span class="data-value">物流园区监控</span></div>
+                    </div>
+                </div>
+                <div class="drone-card" style="border-left-color: var(--theme-blue);">
+                    <span class="area-tag">AREA C</span>
+                    <div class="card-header"><span class="drone-id">Patrol-C-03</span><span class="status-badge" style="background-color:rgba(51,136,255,0.15); color:var(--theme-blue)">市区巡查中</span></div>
+                    <div class="data-grid">
+                        <div class="data-item"><span class="data-label">相对高度</span><span class="data-value">72.4 m</span></div>
+                        <div class="data-item"><span class="data-label">飞行速度</span><span class="data-value">6.8 m/s</span></div>
+                        <div class="data-item"><span class="data-label">电池余量</span><span class="data-value" style="color: var(--status-warn);">61%</span></div>
+                        <div class="data-item"><span class="data-label">任务目标</span><span class="data-value">市中心交通流量</span></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="view-fleet">
+            <h2 style="margin-bottom: 20px; font-size: 1.2rem;">设备资产台账</h2>
+            <table class="data-table">
+                <thead><tr><th>设备编号</th><th>型号</th><th>状态</th><th>所属区域</th></tr></thead>
+                <tbody>
+                    <tr><td>Patrol-A-01</td><td>M300 RTK</td><td><span style="color:var(--status-ok)">任务中</span></td><td>海防港</td></tr>
+                    <tr><td>Patrol-B-02</td><td>Mavic 3E</td><td><span style="color:var(--status-ok)">任务中</span></td><td>工业园区</td></tr>
+                    <tr><td>Patrol-C-03</td><td>M300 RTK</td><td><span style="color:var(--status-ok)">任务中</span></td><td>市中心</td></tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="view-planning">
+            <div class="map-section">
+                <div class="panel-title">在地图上点击绘制航点 (Waypoints)</div>
+                <div id="planning-map"></div> 
+            </div>
+            <div class="planning-panel">
+                <h3 style="margin-bottom: 15px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px;">执行序列 (Sequence)</h3>
+                <ul class="waypoint-list" id="waypoint-list">
+                    <li id="empty-tip" style="color: var(--text-sub); text-align: center; margin-top: 20px;">请在左侧地图点击打点...</li>
+                </ul>
+                <div style="display: flex; gap: 10px; margin-top: auto; padding-top: 20px;">
+                    <button class="btn btn-danger" id="btn-clear-route" style="flex: 1;">清除航线</button>
+                    <button class="btn btn-primary" id="btn-save-route" style="flex: 2;">下发序列至设备</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script>
+        document.getElementById('btn-login').addEventListener('click', function() {
+            const usernameInput = document.getElementById('username').value.trim();
+            const passwordInput = document.getElementById('password').value;
+            if (usernameInput !== '222333' || passwordInput !== '888888') {
+                alert('授权失败：账号或安全密匙错误！'); return;
+            }
+            document.getElementById('current-op-name').innerText = 'OP-' + usernameInput;
+            document.getElementById('user-avatar').innerText = usernameInput.substring(usernameInput.length - 2);
+            
+            const overlay = document.getElementById('login-overlay');
+            overlay.style.opacity = '0'; 
+            setTimeout(() => { overlay.style.display = 'none'; initDashboardMap(); }, 500);
+        });
+
+        let dashboardMap; 
+        const patrolMarkers = [];
+        function initDashboardMap() {
+            if(dashboardMap) return; 
+            dashboardMap = L.map('map').setView([20.855, 106.6881], 12); 
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }).addTo(dashboardMap);
+
+            const droneGroups = [
+                { id: 'Patrol-A-01', lat: 20.855, lng: 106.700, color: '#00f2c3' },
+                { id: 'Patrol-B-02', lat: 20.870, lng: 106.715, color: '#ff8d72' },
+                { id: 'Patrol-C-03', lat: 20.840, lng: 106.665, color: '#3388ff' } 
+            ];
+
+            droneGroups.forEach(group => {
+                const iconHTML = `<div style="background: ${group.color}; width: 14px; height: 14px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px ${group.color};"></div>`;
+                const droneIcon = L.divIcon({ html: iconHTML, className: '', iconSize: [14, 14], iconAnchor: [7, 7] });
+                const marker = L.marker([group.lat, group.lng], {icon: droneIcon}).addTo(dashboardMap);
+                patrolMarkers.push({ markerObj: marker, baseLat: group.lat, baseLng: group.lng });
+            });
+
+            setInterval(() => {
+                patrolMarkers.forEach(drone => {
+                    const newLat = drone.baseLat + (Math.random() - 0.5) * 0.002;
+                    const newLng = drone.baseLng + (Math.random() - 0.5) * 0.002;
+                    drone.markerObj.setLatLng([newLat, newLng]);
+                });
+            }, 2000);
+        }
+
+        let planningMap;
+        let waypoints = []; 
+        let routeLine; 
+        let markerLayerGroup; 
+
+        function initPlanningMap() {
+            if(planningMap) {
+                planningMap.invalidateSize();
+                return; 
+            }
+            
+            planningMap = L.map('planning-map').setView([20.855, 106.6881], 13); 
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }).addTo(planningMap);
+            
+            markerLayerGroup = L.layerGroup().addTo(planningMap);
+            
+            planningMap.on('click', function(e) {
+                const lat = e.latlng.lat;
+                const lng = e.latlng.lng;
+                
+                waypoints.push([lat, lng]);
+                
+                const wpIcon = L.divIcon({
+                    html: `<div style="background: white; color: black; width: 20px; height: 20px; border-radius: 50%; text-align: center; line-height: 20px; font-weight: bold; font-size: 12px; border: 2px solid var(--theme-blue);">${waypoints.length}</div>`,
+                    className: '', iconSize: [24, 24], iconAnchor: [12, 12]
+                });
+                L.marker([lat, lng], {icon: wpIcon}).addTo(markerLayerGroup);
+
+                if(routeLine) {
+                    planningMap.removeLayer(routeLine); 
+                }
+                if(waypoints.length > 1) {
+                    routeLine = L.polyline(waypoints, {color: '#3388ff', weight: 3, dashArray: '5, 10'}).addTo(planningMap);
+                }
+
+                updateWaypointList();
+            });
+            
+            // 确保地图容器尺寸正确后重新加载计算一次，防止显示半屏
+            setTimeout(() => { planningMap.invalidateSize(); }, 200);
+        }
+
+        function updateWaypointList() {
+            const listContainer = document.getElementById('waypoint-list');
+            document.getElementById('empty-tip').style.display = 'none';
+            
+            const latestIndex = waypoints.length - 1;
+            const lat = waypoints[latestIndex][0].toFixed(5);
+            const lng = waypoints[latestIndex][1].toFixed(5);
+
+            const li = document.createElement('li');
+            li.className = 'waypoint-item';
+            li.innerHTML = `
+                <div class="wp-info">
+                    <span class="wp-index">STEP ${waypoints.length}: 到达航点</span>
+                    <span class="wp-coords">Lat: ${lat}, Lng: ${lng}</span>
+                </div>
+                <div style="font-size: 0.8rem; color: var(--status-ok);">+ 悬停拍照</div>
+            `;
+            listContainer.appendChild(li);
+            listContainer.scrollTop = listContainer.scrollHeight;
+        }
+
+        document.getElementById('btn-clear-route').addEventListener('click', function() {
+            waypoints = []; 
+            markerLayerGroup.clearLayers(); 
+            if(routeLine) planningMap.removeLayer(routeLine); 
+            document.getElementById('waypoint-list').innerHTML = '<li id="empty-tip" style="color: var(--text-sub); text-align: center; margin-top: 20px;">请在左侧地图点击打点...</li>';
+        });
+
+        document.getElementById('btn-save-route').addEventListener('click', function() {
+            if(waypoints.length < 2) {
+                alert('系统提示：一条有效的航线至少需要 2 个航点！');
+                return;
+            }
+            alert(`指令已下发！成功将包含 ${waypoints.length} 个执行动作的序列程序发送至设备。`);
+        });
+
+        const navItems = document.querySelectorAll('.nav-item');
+        const views = {
+            '全局联合监控': document.getElementById('view-dashboard'),
+            '设备资产台账': document.getElementById('view-fleet'),
+            '巡查路线规划': document.getElementById('view-planning')
+        };
+
+        navItems.forEach(item => {
+            item.addEventListener('click', function() {
+                navItems.forEach(n => n.classList.remove('active'));
+                this.classList.add('active');
+                
+                Object.values(views).forEach(v => v.style.display = 'none');
+                
+                const targetView = views[this.innerText];
+                if(targetView) {
+                    targetView.style.display = (this.innerText === '巡查路线规划') ? 'flex' : (this.innerText === '设备资产台账' ? 'block' : 'flex');
+                    
+                    if(this.innerText === '全局联合监控' && dashboardMap) {
+                        setTimeout(() => dashboardMap.invalidateSize(), 100);
+                    }
+                    if(this.innerText === '巡查路线规划') {
+                        setTimeout(() => initPlanningMap(), 100);
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>
